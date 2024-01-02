@@ -9,7 +9,7 @@ void scia_fifo_init();
 void interrupt_gpio(void);
 
 // Global variables
-Uint16 LoopCount;
+Uint16 LoopCount = 0;
 Uint16 Index = 0;
 Uint16 ReceivedChar;
 Uint16 ReceiveWatch = 0;
@@ -17,7 +17,9 @@ Uint16 IsStartBit = 0;
 Uint16 IsEndBit = 0;
 Uint16 StartIndex = 0;
 Uint16 sciReceiving = 0;
-volatile Uint16 ReceiveEnable = 0;
+Uint16 Ack = 0;
+Uint16 EndIndex = 0;
+volatile Uint16 ReceiveEnable = 0;  // Volatile is used for variables which changed inside interrupts
 
 // Test Variables
 Uint16 test = 0;
@@ -27,7 +29,7 @@ __interrupt void receive_interrupt(void);
 
 
 Uint16 Receive_Buff[RECEIVER_BUFFER];
-
+Uint16 SPIArray[RECEIVER_BUFFER - 6];
 
 void main(void){
 
@@ -62,6 +64,7 @@ void main(void){
     PieCtrlRegs.PIEIER1.bit.INTx4 = 1 ; // Enable pie group 1 INT4
     IER |= M_INT1;   // @suppress("Symbol is not resolved")   Enable CPU INT1
     EINT;
+
 
     interrupt_gpio();
     initUART();
@@ -99,26 +102,60 @@ void main(void){
                  if(IsStartBit){
                      if(Receive_Buff[Index] == 0xAE && Receive_Buff[Index - 1] == 0xAE){
                          IsEndBit = 1;
+                         EndIndex = Index - 2;
                      }
                  }
-             }
-
-             if(Index < 26){
-                 Index++;
-             }
-             else{
-
-                 ReceiveEnable = 0;
-                 Index = 0;
-                 break;
-             }
+                 if(Receive_Buff[Index] == 0xFA && Receive_Buff[Index - 1] == 0xFA){
+                     Ack = 1;
+                 }
             }
+
+            if(Index < 26){
+                Index++;
+            }
+            else{
+                ReceiveEnable = 0;
+                Index = 0;
+                GpioDataRegs.GPASET.bit.GPIO9 = 1;
+                break;
+             }
+           }
+           GpioDataRegs.GPBCLEAR.bit.GPIO50 = 1;
+           // aux4_f += 0.01;
+           int i = 0;
+           int j = 0;
+
+           if(IsEndBit){
+               for(i = StartIndex; i < EndIndex; i++){
+                   if(((Receive_Buff[i] == 0xFA) && (Receive_Buff[i+1] == 0xFA)) || ((Receive_Buff[i] == 0xFA) && (Receive_Buff[i-1] == 0xFA))){
+
+                   }
+                   else{
+                       SPIArray[j] = Receive_Buff[i];
+                       if(j < 20){
+                           j++;
+                       }
+                       else{
+                           j=0;
+                           break;
+                       }
+                   }
+               }
+
+               StartIndex = 0;
+               EndIndex = 0;
+               IsStartBit = 0;
+               IsEndBit = 0;
+
+           }
+
         }
     }
 }
 
 __interrupt void receive_interrupt(void){
     ReceiveEnable = 1;
+    GpioDataRegs.GPACLEAR.bit.GPIO9 = 1;
     PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
 }
 
@@ -147,12 +184,13 @@ void interrupt_gpio(void){
     GpioCtrlRegs.GPADIR.bit.GPIO30 = 0;     // Input
     GpioCtrlRegs.GPAQSEL2.bit.GPIO30 = 0;   //  tried to change
 
-//    GpioCtrlRegs.GPAMUX1.bit.GPIO9 = 0;    // GPIO
-//    GpioDataRegs.GPACLEAR.bit.GPIO9 = 1;
-//    GpioCtrlRegs.GPAPUD.bit.GPIO9 = 0;    // Enable pull up for  GPIO9 (Receiver enable disable gpio)
-//    GpioCtrlRegs.GPADIR.bit.GPIO9 = 0;     // Output
-//    GpioDataRegs.GPACLEAR.bit.GPIO9 = 1;    // GPIO
+    GpioDataRegs.GPACLEAR.bit.GPIO9 = 1;
+    GpioCtrlRegs.GPAMUX1.bit.GPIO9 = 0;
+    GpioCtrlRegs.GPADIR.bit.GPIO9 = 1;
 
+    GpioCtrlRegs.GPBMUX2.bit.GPIO50 = 0;
+    GpioCtrlRegs.GPBPUD.bit.GPIO50 = 1;
+    GpioCtrlRegs.GPBMUX2.bit.GPIO50 = 0; // LED
     EDIS;
 
     EALLOW;
